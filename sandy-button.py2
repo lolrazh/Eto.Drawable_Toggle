@@ -1,0 +1,146 @@
+import Eto.Drawing as drawing
+import Eto.Forms as forms
+import Rhino
+import scriptcontext as sc
+import math
+
+class SimpleDrawable(forms.Drawable):
+    def __init__(self, state):
+        self.BackgroundColor = drawing.Color.FromArgb(13, 13, 13) if state else drawing.Color.FromArgb(242, 242, 242)
+        self.min_width = 50
+        self.max_width = 300
+        self.reference_width = 500
+        self.padding = 20
+        self._hover = False
+        self._state = state
+        self._is_transitioning = False
+
+        self._timer = forms.UITimer()
+        self._timer.Interval = 0.005
+        self._timer.Elapsed += self.on_timer_tick
+        self._transition_step = 0
+        self._transition_duration = 25
+
+    def f(self, x, ref, min_size, max_size):
+        scale_factor = 1 + math.log1p(x / ref)
+        scaled_size = scale_factor * min_size
+        return max(min_size, min(max_size, scaled_size))
+
+    def OnPaint(self, e):
+        rect_width = self.f(self.Width - 2 * self.padding, self.reference_width, self.min_width, self.max_width)
+        rect_height = rect_width / 2
+        corner_radius = rect_height / 2
+
+        rect_x = (self.Width - rect_width) / 2
+        rect_y = (self.Height - rect_height) / 2
+        
+        rect = drawing.RectangleF(rect_x, rect_y, rect_width, rect_height)
+        path = drawing.GraphicsPath.GetRoundRect(rect, corner_radius)
+        pen = drawing.Pen(drawing.Color.FromArgb(13, 13, 13), 0)
+
+        # Determine colors based on the state and transition
+        t = self._transition_step / self._transition_duration
+        if self._state:
+            e.Graphics.FillPath(drawing.Color.FromArgb(242, 242, 242), path)
+            circle_color = drawing.Color.FromArgb(13, 13, 13)
+        else:
+            e.Graphics.FillPath(drawing.Color.FromArgb(13, 13, 13), path)
+            circle_color = drawing.Color.FromArgb(242, 242, 242)
+
+        e.Graphics.DrawPath(pen, path)
+
+        gap = rect_height * 0.15
+        circle_diameter = corner_radius * 1.5
+        circle_radius = circle_diameter / 2
+
+        if self._hover and not self._is_transitioning:  # Adjust size only when not transitioning
+            circle_diameter *= 1.1  # enlarge the circle slightly on hover
+            circle_radius = circle_diameter / 2  # recalculate radius
+
+        if self._state:
+            circle_center_x = rect_x + (gap + circle_radius)
+        else:
+            circle_center_x = (rect_x + rect_width) - (gap + circle_radius)
+
+        # Draw the circle
+        e.Graphics.FillEllipse(circle_color, (circle_center_x - circle_radius), ((rect_y + rect_height / 2) - circle_radius), circle_diameter, circle_diameter)
+
+    def on_timer_tick(self, sender, e):
+        t = self._transition_step / self._transition_duration
+        if self._state:
+            r = int(242 - (242 - 13) * t)
+            g = int(242 - (242 - 13) * t)
+            b = int(242 - (242 - 13) * t)
+        else:
+            r = int(13 + (242 - 13) * t)
+            g = int(13 + (242 - 13) * t)
+            b = int(13 + (242 - 13) * t)
+
+        self.BackgroundColor = drawing.Color.FromArgb(r, g, b)
+        self._transition_step += 1
+        if self._transition_step > self._transition_duration:
+            self._timer.Stop()
+            self._is_transitioning = False  # Mark the end of the transition
+
+        self.Invalidate()  # Repaint during the transition
+
+    def OnMouseMove(self, e):
+        rect_width = self.f(self.Width - 2 * self.padding, self.reference_width, self.min_width, self.max_width)
+        rect_height = rect_width / 2
+        rect_x = (self.Width - rect_width) / 2
+        rect_y = (self.Height - rect_height) / 2
+        
+        rect = drawing.RectangleF(rect_x, rect_y, rect_width, rect_height)
+        
+        was_hover = self._hover
+        self._hover = rect.Contains(e.Location)
+
+        if self._hover != was_hover and not self._is_transitioning:  # Only invalidate if not in transition
+            self.Invalidate()
+
+    def OnMouseEnter(self, e):
+        self.OnMouseMove(e)
+
+    def OnMouseLeave(self, e):
+        self._hover = False
+        if not self._is_transitioning:  # Only invalidate if not in transition
+            self.Invalidate()
+
+    def OnMouseDown(self, e):
+        if e.Buttons == forms.MouseButtons.Primary and self._hover and not self._is_transitioning:
+            self._state = not self._state
+            self._transition_step = 0
+            self._is_transitioning = True  # Mark the start of a transition
+            self._timer.Start()
+            self.Invalidate()
+
+    def OnMouseUp(self, e):
+        pass
+
+class SimpleDialog(forms.Dialog[bool]):
+    def __init__(self):
+        self.WindowStyle = forms.WindowStyle.None
+        self.MovableByWindowBackground = True
+        self.Size = drawing.Size(225, 275)
+        self.MinimumSize = drawing.Size(150, 150)
+        self.Resizable = True
+
+        self.drawable = SimpleDrawable(True)
+        self.Content = self.drawable
+        
+        self.KeyDown += self.on_key_down
+
+    def on_key_down(self, sender, e):
+        if e.Key == forms.Keys.Escape:
+            self.Close(False)
+
+def ShowDialogBox():
+    dialog = SimpleDialog()
+    rc = Rhino.UI.EtoExtensions.ShowSemiModal(
+        dialog,
+        sc.doc.ActiveDoc,
+        Rhino.UI.RhinoEtoApp.MainWindow
+    )
+
+if __name__ == "__main__":
+    ShowDialogBox()
